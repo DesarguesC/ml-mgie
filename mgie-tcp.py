@@ -1,11 +1,14 @@
-import os, time
+mport os, time
 from tqdm.auto import tqdm
 from PIL import Image
+import cv2
 import torch as T
 import transformers, diffusers
 from llava.conversation import conv_templates
 from llava.model import *
 from socket import *
+import threading
+import numpy as np
 
 def crop_resize(f, sz=512):
     w, h = f.size
@@ -26,7 +29,7 @@ def remove_alter(s):  # hack expressive instruction
     if s[-1]!='.': s += '.'
     return s.strip()
 
-serverHost, serverPort = '127.0.0.1', '4096'
+
 
 def main():
     DEFAULT_IMAGE_TOKEN = '<image>'
@@ -63,7 +66,7 @@ def main():
     with T.inference_mode(): NULL = model.edit_head(T.zeros(1, 8, 4096).half().to('cuda'), EMB)
     print('NULL:', NULL.shape)
 
-    pipe = diffusers.StableDiffusionInstructPix2PixPipeline.from_pretrained('../autodl-tmp/instruct-pix2pix', torch_dtype=T.float16, safety_checker=None).to('cuda')
+    pipe = diffusers.StableDiffusionInstructPix2PixPipeline.from_pretrained('../autodl-tmp/ip2p', torch_dtype=T.float16, safety_checker=None).to('cuda')
     pipe.set_progress_bar_config(disable=True)
     pipe.unet.load_state_dict(T.load('./_ckpt/mgie_7b/unet.pt', map_location='cpu'))
 
@@ -78,19 +81,26 @@ def main():
             buf = buf + new_buf
             length = length - len(new_buf)
         return buf
-    def receive_image_from_length(socks):
-        length = receive_from_length(socks, 16)
+        
+    def receive_image_from_length(socks, length=16):
+        length = receive_from_length(socks, length)
         img_str = receive_from_length(socks, int(length))
         data = np.fromstring(img_str, dtype='uint8')
         decode_img = cv2.imdecode(data, 1)
         return Image.fromarray(decode_img).convert('RGB')
-    def Image_encoder(img_Image):
+        
+    def Encode_and_Send(socks, img_Image):
         image = np.array(img_Image)
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 100]
         result, img_encode = cv2.imencode('.jpg', image, encode_param)
         data = np.array(img_encode)
         str_data = data.tostring()
-        return str(len(str_data)).ljust(16).encode()
+        socks.send(str(len(str_data)).ljust(16).encode())
+        print('Length Sent.')
+        socks.send(str_data)
+        print('Image Sent.')
+    
+        
     
     # MGIE Utils
     def input_preprocess(edit_str, img_Image):
@@ -99,7 +109,7 @@ def main():
                     f'{DEFAULT_IM_START_TOKEN}{DEFAULT_IMAGE_PATCH_TOKEN*image_token_len}{DEFAULT_IM_END_TOKEN}'
         
         conv = conv_templates['vicuna_v1_1'].copy()
-        conv.append_message(conv.roles[0], txt), conv.append_message(conv.roles[1], None)
+        conv.append_message(conv.roles[0], edit_str), conv.append_message(conv.roles[1], None)
 
         edit_str = tokenizer(conv.get_prompt())
         edit_str, edit_mask = T.as_tensor(edit_str['input_ids']), T.as_tensor(edit_str['attention_mask'])
@@ -109,14 +119,21 @@ def main():
         
 
     SEED = 42
+    serverHost, serverPort = '127.0.0.1', 4096
     serverSocket = socket(AF_INET, SOCK_STREAM)
     serverSocket.bind((serverHost, serverPort))
-    serverSocket.listen(10)
+    print(f'\n\nMGIE Socket is now available as {serverHost}:{serverPort}\n\n')
+    serverSocket.listen(1)
     connectionSocket, addr = serverSocket.accept()
+
+
     while True:
-        edit_txt = connectionSocket.recv(1024).decode() # str
-        print(f'edit_txt received: {edit_txt}')
+        # edit_txt = sock.recv(1024).decode('utf-8') # str
+        edit_txt = connectionSocket.recv(4096).decode()
+        print(f'Edit_txt received: {edit_txt}')
+        time.sleep(0.5)
         img = receive_image_from_length(connectionSocket) # Image.Image
+        print(f'Received: img.size = {img.size}')
 
         edit_txt, edit_img, edit_mask = input_preprocess(edit_txt, img)
         with T.inference_mode():
@@ -134,14 +151,20 @@ def main():
             out, hid = out['sequences'][0].tolist(), T.cat([x[-1] for x in out['hidden_states']], dim=1)[0]
             p = min(out.index(32003)-1 if 32003 in out else len(hid)-9, len(hid)-9)
             hid = hid[p:p+8]
+            
             out = remove_alter(tokenizer.decode(out))
             emb = model.edit_head(hid.unsqueeze(dim=0), EMB)
             res = pipe(image=img, prompt_embeds=emb, negative_prompt_embeds=NULL, generator=T.Generator(device='cuda').manual_seed(SEED)).images[0] # Image.Image
 
-        connectionSocket.send(Image_encoder(res))
-        time.sleep(3)
+        Encode_and_Send(connectionSocket, res)
+        time.sleep(2)
+        
+
+    serverSocket.close()
+    sys.exit()
+    
+    
 
         
 if __name__ == '__main__':
     main()
-
