@@ -1,4 +1,4 @@
-mport os, time
+import os, time
 from tqdm.auto import tqdm
 from PIL import Image
 import cv2
@@ -122,7 +122,7 @@ def main():
     serverHost, serverPort = '127.0.0.1', 4096
     serverSocket = socket(AF_INET, SOCK_STREAM)
     serverSocket.bind((serverHost, serverPort))
-    print(f'\n\nMGIE Socket is now available as {serverHost}:{serverPort}\n\n')
+    print(f'\n\nMGIE Socket is now available at {serverHost}:{serverPort}\n\n')
     serverSocket.listen(1)
     connectionSocket, addr = serverSocket.accept()
 
