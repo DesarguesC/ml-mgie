@@ -125,7 +125,7 @@ def main():
     print(f'\n\nMGIE Socket is now available at {serverHost}:{serverPort}\n\n')
     serverSocket.listen(1)
     connectionSocket, addr = serverSocket.accept()
-
+    print('Connected.')
 
     while True:
         # edit_txt = sock.recv(1024).decode('utf-8') # str
