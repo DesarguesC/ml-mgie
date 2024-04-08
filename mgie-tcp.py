@@ -62,6 +62,7 @@ def main():
     image_token_len = (vision_config.image_size//vision_config.patch_size)**2
     
     _ = model.eval()
+    summer = transformers.pipeline('summarization', 'jordiclive/flan-t5-11b-summarizer-filtered', torch_dtype=T.bfloat16, device=0)
     EMB = ckpt['emb'].cuda()
     with T.inference_mode(): NULL = model.edit_head(T.zeros(1, 8, 4096).half().to('cuda'), EMB)
     print('NULL:', NULL.shape)
